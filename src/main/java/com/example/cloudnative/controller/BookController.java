@@ -2,6 +2,7 @@ package com.example.cloudnative.controller;
 
 import com.example.cloudnative.domain.Book;
 import com.example.cloudnative.servvice.BookService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -24,7 +25,7 @@ public class BookController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)     // 성공적으로 생성되면 201 상태 코드를 보냄
-    public Book createBook(@RequestBody Book book) {
+    public Book createBook(@Valid @RequestBody Book book) {
         return bookService.addBookToCatalog(book);
     }
 
@@ -35,7 +36,7 @@ public class BookController {
     }
 
     @PutMapping("{isbn}")
-    public Book updateBook(@PathVariable String isbn, @RequestBody Book book) {
+    public Book updateBook(@PathVariable String isbn, @Valid @RequestBody Book book) {
         return bookService.updateBook(isbn, book);
     }
 }
