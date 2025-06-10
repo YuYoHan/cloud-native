@@ -12,8 +12,7 @@ on:
         options:
           - 'true'
           - 'false'
-  pull_request:
-    types: [closed]
+  push:
     branches:
       - main
 
