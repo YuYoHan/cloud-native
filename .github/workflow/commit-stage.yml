@@ -1,0 +1,261 @@
+name: CI/CD Pipeline
+
+# 트리거 조건: main 브랜치에 PR이 머지되거나 수동 실행 시 워크플로우 동작
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: '실제 EC2 배포 실행 여부'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  # ===================== CI: 빌드 및 보안 검사 =====================
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      # 1. GitHub 저장소 코드 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Anchore Grype를 이용한 취약점 스캔
+      - name: Code vulnerability scanning
+        uses: anchore/scan-action@v3
+        id: scan
+        with:
+          path: "${{ github.workspace }}"
+          fail-build: false
+          security-cutoff: high
+          acs-report-enable: true
+
+      # 3. SARIF 포맷의 보안 리포트를 GitHub에 업로드
+      - name: Upload vulnerability report
+        uses: github/codeql-action/upload-sarif@v2
+        if: success() || failure()
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+
+      # 4. Gradle 의존성 캐시 설정
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 5. Java JDK 17 설정
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # 6. Gradle wrapper 실행 권한 부여
+      - name: Make Gradle Wrapper executable
+        run: chmod +x ./gradlew
+
+      # 7. Gradle 빌드 실행
+      - name: Run Gradle Build
+        env:
+          RDS_MYSQL_URL: ${{ secrets.RDS_MYSQL_URL }}
+          RDS_MYSQL_NAME: ${{ secrets.RDS_MYSQL_NAME }}
+          RDS_MYSQL_SECRET: ${{ secrets.RDS_MYSQL_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          S3_ACCESS: ${{ secrets.S3_ACCESS }}
+          S3_SECRET: ${{ secrets.S3_SECRET }}
+          GOOGLE_CLIENT: ${{ secrets.GOOGLE_CLIENT }}
+          GOOGLE_SECRET: ${{ secrets.GOOGLE_SECRET }}
+          NAVER_CLIENT: ${{ secrets.NAVER_CLIENT }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+          OAUTH2_URI: ${{ secrets.OAUTH2_URI }}
+          SPRING_PROFILES_ACTIVE: prod
+          REDIS_HOST: redis
+          REDIS_PORT: 6379
+        run: ./gradlew clean build --parallel
+
+  # ===================== CD: EC2 배포 =====================
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.event.inputs.deploy == 'true' }}
+
+    steps:
+      # 1. GitHub 저장소 코드 체크아웃
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. EC2 SSH 포트(22번) 확인: 연결 가능 여부 판단
+      - name: Check EC2 availability
+        id: ec2_check
+        run: |
+          timeout 3 bash -c "</dev/tcp/${{ secrets.PUBLIC_IP }}/22" && echo "ok=true" >> $GITHUB_OUTPUT || echo "ok=false" >> $GITHUB_OUTPUT
+
+      # 3. Docker 설치 (필요한 경우만)
+      - name: Install Docker
+        run: |
+          if ! command -v docker &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+            sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          fi
+
+      # 4. Docker Compose 설치 (필요한 경우만)
+      - name: Install Docker Compose
+        run: |
+          if ! command -v docker-compose &> /dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+        continue-on-error: true
+
+      # 5. Docker Hub 로그인
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      # 6. Docker 이미지 빌드 및 푸시 (빌드 정보 포함)
+      - name: Build and push updated Docker image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: docker/api/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_REPOSITORY }}/meettify:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp || github.run_id }}
+
+      # 7. EC2에서 기존 docker-compose.yml 제거
+      - name: Remove old docker-compose.yml on EC2
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            rm -f /home/ubuntu/docker-compose.yml
+
+      # 8. docker-compose.yml 파일을 EC2로 복사
+      - name: Copy docker-compose.yml to EC2
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: ./docker-compose.yml
+          target: /home/ubuntu
+
+      # 9. .env 파일 존재 시 EC2로 복사
+      - name: Copy .env to EC2 if exists
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        run: |
+          if [ -f .env ]; then
+            scp -i ~/.ssh/id_rsa -P 22 .env ubuntu@${{ secrets.PUBLIC_IP }}:/home/ubuntu/.env
+          else
+            echo ".env file not found. Skipping copy."
+          fi
+
+      # 10. 빌드된 JAR 파일 EC2로 복사
+      - name: Copy JAR file to EC2
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: build/libs/*.jar
+          target: /home/ubuntu/
+
+      # 11. EC2에서 docker-compose up 실행 (재시작)
+      - name: SSH to EC2 and deploy
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            docker image prune -a -f
+            docker container prune -f
+            docker-compose up -d --build
+
+      # 12. Spring Actuator로 헬스 체크 수행
+      - name: Health Check (Spring Boot Actuator)
+        if: ${{ steps.ec2_check.outputs.ok == 'true' }}
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.PUBLIC_IP }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            for i in {1..10}; do
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://meettify.store/monitor/health)
+              if [ "$STATUS" -eq 200 ]; then
+                echo "✅ App is healthy!"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "❌ Health check failed!"
+            exit 1
+
+      # 13. 성공 시 디스코드 알림 전송
+      - name: Send Discord Webhook on Success
+        if: ${{ success() && steps.ec2_check.outputs.ok == 'true' }}
+        run: |
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d '{
+                  "content": "✅ *배포 성공!*",
+                  "embeds": [
+                      {
+                        "title": "메인 브랜치에 머지됨",
+                        "description": "Docker 이미지 빌드 및 배포 완료",
+                        "color": 3066993,
+                        "fields": [
+                            { "name": "커밋", "value": "${{ github.sha }}", "inline": true },
+                            { "name": "작성자", "value": "${{ github.actor }}", "inline": true },
+                            { "name": "브랜치", "value": "${{ github.ref_name }}", "inline": true },
+                            { "name": "빌드 시각", "value": "${{ github.event.head_commit.timestamp || github.run_id }}", "inline": true },
+                            { "name": "배포 여부", "value": "${{ github.event.inputs.deploy }}", "inline": true }
+                        ]
+                      }
+                    ]
+                }'
+
+      # 14. 실패 시 디스코드 알림 전송
+      - name: Send Discord Webhook on Failure
+        if: ${{ failure() && steps.ec2_check.outputs.ok == 'true' }}
+        run: |
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d '{"content": "❌ *배포 실패:* CI/CD 도중 에러 발생!"}' \
+               ${{ secrets.GITHUB_DISCORD_WEBHOOK }}
