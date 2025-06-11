@@ -1,1 +1,4 @@
 rootProject.name = 'cloud-native'
+
+include 'gateway-service', 'eureka-service', 'catalog-service', 'config-service'
+
