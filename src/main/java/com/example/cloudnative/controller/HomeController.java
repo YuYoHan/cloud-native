@@ -1,12 +1,17 @@
 package com.example.cloudnative.controller;
 
+import com.example.cloudnative.config.PolarProperties;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@RequiredArgsConstructor
 public class HomeController {
+    private final PolarProperties polarProperties;
+
     @GetMapping("/")
     public String home() {
-        return "클라우드 네이티브 책 시작";
+        return polarProperties.getGreeting();
     }
 }
