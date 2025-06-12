@@ -1,0 +1,24 @@
+server:
+  port: 8888
+  tomcat:
+    connection-timeout: 2s
+    keep-alive-timeout: 15s
+    threads:
+      max: 50
+      min-spare: 5
+
+spring:
+  application:
+    name: config-service
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/YuYoHan/config-repo.git
+          default-label: main
+          # Git에서 config clone을 시도할 때 제한 시간 설정 (초 단위)
+          timeout: 5
+          # 서비스 시작 시 config repo를 미리 clone
+          clone-on-start: true
+          # 변경 사항이 있어도 강제로 pull 수행
+          force-pull: true
