@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  # Config Server
+  config-service:
+    build:
+      context: ./config-service
+    ports:
+      - "8888:8888"
+    networks:
+      - msa-network
+
+  # Eureka Server
+  eureka-service:
+    build:
+      context: ./eureka-service
+    ports:
+      - "8761:8761"
+    depends_on:
+      - config-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    networks:
+      - msa-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+    ports:
+      - "9000:9000"
+    depends_on:
+      - eureka-service
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    networks:
+      - msa-network
+
+  # Catalog Service
+  catalog-service:
+    build:
+      context: ./catalog-service
+    ports:
+      - "9001:9001"
+    depends_on:
+      - eureka-service
+      - catalog-db
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://catalog-db:3306/catalogdb
+      - SPRING_DATASOURCE_USERNAME=zxzz45
+      - SPRING_DATASOURCE_PASSWORD=dbekdms147
+      - SPRING_PROFILES_ACTIVE=prod
+    networks:
+      - msa-network
+
+  catalog-db:
+    image: mysql:8.0
+    container_name: catalog-db
+    environment:
+      MYSQL_ROOT_PASSWORD: pass
+      MYSQL_DATABASE: catalogdb
+    ports:
+      - "3307:3306"
+    volumes:
+      - catalog-data:/var/lib/mysql
+    networks:
+      - msa-network
+
+  # User Service
+#  user-service:
+#    build:
+#      context: ./user-service
+#    ports:
+#      - "8082:8082"
+#    depends_on:
+#      - eureka-service
+#      - user-db
+#    environment:
+#      - SPRING_DATASOURCE_URL=jdbc:mysql://user-db:3306/userdb
+#      - SPRING_DATASOURCE_USERNAME=root
+#      - SPRING_DATASOURCE_PASSWORD=pass
+#      - SPRING_PROFILES_ACTIVE=prod
+#    networks:
+#      - msa-network
+
+#  user-db:
+#    image: mysql:8.0
+#    container_name: user-db
+#    environment:
+#      MYSQL_ROOT_PASSWORD: pass
+#      MYSQL_DATABASE: userdb
+#    ports:
+#      - "3308:3306"
+#    volumes:
+#      - user-data:/var/lib/mysql
+#    networks:
+#      - msa-network
+
+  # Order Service
+#  order-service:
+#    build:
+#      context: ./order-service
+#    ports:
+#      - "8083:8083"
+#    depends_on:
+#      - eureka-service
+#      - order-db
+#    environment:
+#      - SPRING_DATASOURCE_URL=jdbc:mysql://order-db:3306/orderdb
+#      - SPRING_DATASOURCE_USERNAME=root
+#      - SPRING_DATASOURCE_PASSWORD=pass
+#      - SPRING_PROFILES_ACTIVE=prod
+#    networks:
+#      - msa-network
+
+#  order-db:
+#    image: mysql:8.0
+#    container_name: order-db
+#    environment:
+#      MYSQL_ROOT_PASSWORD: pass
+#      MYSQL_DATABASE: orderdb
+#    ports:
+#      - "3309:3306"
+#    volumes:
+#      - order-data:/var/lib/mysql
+#    networks:
+#      - msa-network
+
+networks:
+  msa-network:
+
+volumes:
+  catalog-data:
+  user-data:
+  order-data:
