@@ -48,7 +48,7 @@ services:
     environment:
       - SPRING_DATASOURCE_URL=jdbc:mysql://catalog-db:3306/catalogdb
       - SPRING_DATASOURCE_USERNAME=zxzz45
-      - SPRING_DATASOURCE_PASSWORD=dbekdms147
+      - SPRING_DATASOURCE_PASSWORD=1234
       - SPRING_PROFILES_ACTIVE=prod
     networks:
       - msa-network
