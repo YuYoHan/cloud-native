@@ -27,6 +27,7 @@ public record Book (
         @NotNull(message = "The book price must be defined")
         @Positive(message = "The book price must be greater than zero") // 0보다 큰 값을 가져와야 한다.
         Double price,
+        String publisher,
         @CreatedDate
         Instant createdDate,
         @LastModifiedDate
@@ -35,10 +36,10 @@ public record Book (
         @Version
         int version
 ){
-        public static Book of(String isbn, String title, String author, Double price) {
+        public static Book of(String isbn, String title, String author, Double price, String publisher) {
                 // ID가 null이고 버전이 0이면 새로운 엔티티로 인식
                 return new Book(
-                        null, title, isbn, author,  price, null, null, 0
+                        null, title, isbn, author,  price, publisher, null, null, 0
                 );
         }
 }
